@@ -56,6 +56,28 @@ let gameState = 'start';
 let launched = false;
 let autoLaunchTimer = 0;
 
+// Multiball
+let balls = []; // array of ball objects
+const MAX_BALLS = 3;
+
+// Combo system
+let comboCount = 0;
+let comboTimer = 0;
+const COMBO_WINDOW = 1500; // ms
+let comboDisplay = {count:0,timer:0};
+
+// Jackpot
+let jackpotActive = false;
+let jackpotTimer = 0;
+const JACKPOT_DURATION = 8000;
+let jackpotBumper = null;
+
+// Extra ball tracker (gates in one life)
+let gatesHitThisLife = new Set();
+let extraBallAwarded = false;
+let skillShotTarget = null;
+let skillShotTimer = 0;
+
 const GRAVITY = 0.22;
 const FLIPPER_FORCE = 16;
 const FLIPPER_ANGULAR_VEL = 0.35;
@@ -64,7 +86,42 @@ const WALL_BOUNCE = 0.72;
 const FLIPPER_BOUNCE = 1.4;
 const MAX_VEL = 22;
 
-let ball = {x:0,y:0,vx:0,vy:0,r:BALL_RADIUS,trail:[],glow:1};
+// balls array — index 0 is the primary ball, extra balls are [1..]
+let balls = [];
+function makeBall(x,y,vx,vy){
+  return {x,y,vx,vy,r:BALL_RADIUS,trail:[],glow:1,id:Math.random(),extra:false};
+}
+function resetPrimaryBall(){
+  const b = balls[0];
+  b.x = b.startX; b.y = b.startY; b.vx = 0; b.vy = 0;
+  b.trail = [];
+  launched = false;
+  autoLaunchTimer = 0;
+}
+function launchBall(){
+  if(!launched && ballsLeft > 0 && balls[0]){
+    launched = true;
+    balls[0].vx = -1 + Math.random() * 2;
+    balls[0].vy = ballLaunchVy;
+    // Skill shot check
+    if(skillShotTarget !== null && skillShotTimer > 0){
+      // Skill shot: if launch goes through the right gate
+      addScore(500, balls[0].x, balls[0].y - 20);
+      spawnScorePopup(balls[0].x, balls[0].y - 40, 'SKILL SHOT +500', '#00ff88');
+      flashScreen('#00ff88');
+    }
+    skillShotTarget = null;
+  }
+}
+function spawnExtraBall(x,y,vx,vy){
+  if(balls.length < MAX_BALLS){
+    let b = makeBall(x,y,vx||0,vy||-8);
+    b.extra = true;
+    balls.push(b);
+    spawnParticles(x,y,'#00ff88',15,6);
+    flashScreen('#00ff88');
+  }
+}
 let leftFlipper = {x:0,y:0,len:0,angle:0.4,targetAngle:0.4,angularVel:0,side:'left'};
 let rightFlipper = {x:0,y:0,len:0,angle:2.74,targetAngle:2.74,angularVel:0,side:'right'};
 let walls = [];
@@ -180,28 +237,24 @@ function buildLevel(){
   gates.push({x:cx, y:tableTop+440, r:gateR, color:'#D4A853', flash:0, hit:false, score:200});
 
   // Ball launch position
-  ball.startX = tableRight - 35;
-  ball.startY = flipY - 20;
+  if(!balls[0]){
+    balls[0] = makeBall(tableRight - 35, flipY - 20, 0, 0);
+  }
+  balls[0].startX = tableRight - 35;
+  balls[0].startY = flipY - 20;
+  balls[0].extra = false;
 
   drainZone = {x:cx - drainW/2, y:tableBottom-10, w:drainW, h:40};
 
   if(!launched || gameState === 'start'){
-    ball.x = ball.startX;
-    ball.y = ball.startY;
-    ball.vx = 0;
-    ball.vy = 0;
+    if(balls[0]){
+      balls[0].x = balls[0].startX;
+      balls[0].y = balls[0].startY;
+      balls[0].vx = 0;
+      balls[0].vy = 0;
+      balls[0].trail = [];
+    }
   }
-}
-
-function resetBall(){
-  launched = false;
-  ball.x = ball.startX;
-  ball.y = ball.startY;
-  ball.vx = 0;
-  ball.vy = 0;
-  ball.trail = [];
-  ball.glow = 1;
-  autoLaunchTimer = 0;
 }
 
 function launchBall(){
@@ -234,108 +287,203 @@ function flashScreen(color){
   setTimeout(()=>{flash.style.opacity='0';},80);
 }
 
-function addScore(pts,x,y){
-  score += pts;
-  scoreEl.textContent = score;
-  spawnScorePopup(x,y,'+'+pts,'#D4A853');
-}
+// addScore moved inside updateBall
 
 function updateBall(dt){
   if(!launched){
     autoLaunchTimer += dt;
     if(autoLaunchTimer > 2.5 && gameState === 'playing') launchBall();
+    // Update skill shot timer
+    if(skillShotTimer > 0) skillShotTimer -= dt * 1000;
     return;
   }
+  if(skillShotTimer > 0) skillShotTimer -= dt * 1000;
 
-  // Gravity
-  ball.vy += GRAVITY;
-
-  // Clamp velocity
-  let speed = Math.sqrt(ball.vx*ball.vx+ball.vy*ball.vy);
-  if(speed > MAX_VEL){
-    ball.vx = (ball.vx/speed)*MAX_VEL;
-    ball.vy = (ball.vy/speed)*MAX_VEL;
-  }
-
-  // Move
-  ball.x += ball.vx;
-  ball.y += ball.vy;
-
-  // Trail
-  ball.trail.unshift({x:ball.x,y:ball.y});
-  if(ball.trail.length > 28) ball.trail.pop();
-
-  // Wall collisions
-  for(let w of walls){
-    resolveWall(ball, w);
-  }
-
-  // Bumper collisions
-  for(let b of bumpers){
-    let dx = ball.x - b.x;
-    let dy = ball.y - b.y;
-    let dist = Math.sqrt(dx*dx+dy*dy);
-    let minD = ball.r + b.r;
-    if(dist < minD && dist > 0){
-      let nx = dx/dist, ny = dy/dist;
-      let overlap = minD - dist;
-      ball.x += nx * overlap;
-      ball.y += ny * overlap;
-      let dvx = ball.vx - nx * 6;
-      let dvy = ball.vy - ny * 6;
-      ball.vx += nx * 6;
-      ball.vy += ny * 6;
-      let spd = Math.sqrt(dvx*dvx+dvy*dvy)*0.4;
-      ball.vx += nx * spd;
-      ball.vy += ny * spd;
-      b.flash = 1;
-      let pts = b.score * wave;
-      addScore(pts, b.x, b.y - b.r);
-      spawnParticles(b.x, b.y, b.color, 12, 5);
-      flashScreen(b.color);
-    }
-    b.flash *= 0.88;
-  }
-
-  // Gate collisions
-  for(let g of gates){
-    let dx = ball.x - g.x;
-    let dy = ball.y - g.y;
-    let dist = Math.sqrt(dx*dx+dy*dy);
-    if(dist < ball.r + g.r && !g.hit){
-      g.hit = true;
-      g.flash = 1;
-      ball.vx += dx/dist * 3;
-      ball.vy += dy/dist * 3;
-      addScore(g.score * wave, g.x, g.y);
-      spawnParticles(g.x, g.y, g.color, 20, 6);
-      flashScreen(g.color);
-      setTimeout(()=>{g.hit=false;},3000);
-    }
-    g.flash *= 0.9;
-  }
-
-  // Drain check
-  if(ball.y > H + 60){
-    ballsLeft--;
-    ballsEl.textContent = ballsLeft;
-    spawnParticles(ball.x, H-20, '#00ff88', 20, 5);
-    if(ballsLeft <= 0){
-      gameState = 'gameover';
-      showOverlay('GAME OVER', 'FINAL SCORE', score, 'PRESS SPACE TO PLAY AGAIN');
-    } else {
-      resetBall();
+  // Update jackpot
+  if(jackpotActive){
+    jackpotTimer -= dt * 1000;
+    if(jackpotTimer <= 0){
+      jackpotActive = false;
+      jackpotBumper = null;
     }
   }
 
-  // Ceiling
-  if(ball.y < 0){
-    ball.y = 0;
-    ball.vy = Math.abs(ball.vy) * 0.5;
+  // Update combo timer
+  if(comboCount > 0){
+    comboTimer -= dt * 1000;
+    if(comboTimer <= 0){
+      comboCount = 0;
+      comboDisplay.count = 0;
+    }
   }
-  // Side walls
-  if(ball.x < 0){ ball.x = 0; ball.vx = Math.abs(ball.vx)*WALL_BOUNCE; }
-  if(ball.x > W){ ball.x = W; ball.vx = -Math.abs(ball.vx)*WALL_BOUNCE; }
+  if(comboDisplay.count > 0){
+    comboDisplay.timer -= dt * 1000;
+    if(comboDisplay.timer <= 0) comboDisplay.count = 0;
+  }
+
+  // Update each ball
+  for(let bi = balls.length - 1; bi >= 0; bi--){
+    let ball = balls[bi];
+
+    if(!launched && bi === 0) continue;
+    if(!launched) continue; // extra balls wait
+
+    // Gravity
+    ball.vy += GRAVITY;
+
+    // Clamp velocity
+    let speed = Math.sqrt(ball.vx*ball.vx+ball.vy*ball.vy);
+    if(speed > MAX_VEL){
+      ball.vx = (ball.vx/speed)*MAX_VEL;
+      ball.vy = (ball.vy/speed)*MAX_VEL;
+    }
+
+    // Move
+    ball.x += ball.vx;
+    ball.y += ball.vy;
+
+    // Trail
+    ball.trail.unshift({x:ball.x,y:ball.y});
+    if(ball.trail.length > 28) ball.trail.pop();
+
+    // Wall collisions
+    for(let w of walls){
+      resolveWall(ball, w);
+    }
+
+    // Bumper collisions
+    for(let b of bumpers){
+      let dx = ball.x - b.x;
+      let dy = ball.y - b.y;
+      let dist = Math.sqrt(dx*dx+dy*dy);
+      let minD = ball.r + b.r;
+      if(dist < minD && dist > 0){
+        let nx = dx/dist, ny = dy/dist;
+        let overlap = minD - dist;
+        ball.x += nx * overlap;
+        ball.y += ny * overlap;
+        let dvx = ball.vx - nx * 6;
+        let dvy = ball.vy - ny * 6;
+        ball.vx += nx * 6;
+        ball.vy += ny * 6;
+        let spd = Math.sqrt(dvx*dvx+dvy*dvy)*0.4;
+        ball.vx += nx * spd;
+        ball.vy += ny * spd;
+        b.flash = 1;
+
+        // Combo system
+        comboCount++;
+        comboTimer = COMBO_WINDOW;
+        let comboMultiplier = Math.min(comboCount, 10);
+        let isJackpot = jackpotActive && b === jackpotBumper;
+
+        let pts = b.score * wave;
+        if(isJackpot) pts *= 5;
+        pts = Math.floor(pts * (1 + (comboMultiplier - 1) * 0.1));
+        addScore(pts, b.x, b.y - b.r);
+        if(comboCount >= 3){
+          spawnScorePopup(b.x, b.y - b.r - 20, 'x'+comboMultiplier+' COMBO', '#D4A853');
+          comboDisplay.count = comboCount;
+          comboDisplay.timer = 1000;
+        }
+
+        // Jackpot bumper spawns extra ball (only if primary ball is launched)
+        if(isJackpot && launched){
+          spawnExtraBall(b.x, b.y, (Math.random()-0.5)*10, -8);
+          flashScreen('#D4A853');
+        }
+
+        spawnParticles(b.x, b.y, isJackpot ? '#D4A853' : b.color, isJackpot ? 25 : 12, isJackpot ? 8 : 5);
+        flashScreen(b.color);
+      }
+      b.flash *= 0.88;
+    }
+
+    // Gate collisions
+    for(let gi = 0; gi < gates.length; gi++){
+      let g = gates[gi];
+      let dx = ball.x - g.x;
+      let dy = ball.y - g.y;
+      let dist = Math.sqrt(dx*dx+dy*dy);
+      if(dist < ball.r + g.r && !g.hit){
+        g.hit = true;
+        g.flash = 1;
+        ball.vx += dx/dist * 3;
+        ball.vy += dy/dist * 3;
+
+        // Track gates hit this life for extra ball
+        if(!ball.extra) gatesHitThisLife.add(gi);
+
+        // Extra ball: hit all 3 gates in one life
+        if(gatesHitThisLife.size >= 3 && !extraBallAwarded && !ball.extra){
+          extraBallAwarded = true;
+          ballsLeft++;
+          ballsEl.textContent = ballsLeft;
+          flashScreen('#00ff88');
+          spawnScorePopup(W/2, H/2, 'EXTRA BALL!', '#00ff88');
+          addScore(500, W/2, H/2);
+        }
+
+        addScore(g.score * wave, g.x, g.y);
+        spawnParticles(g.x, g.y, g.color, 20, 6);
+        flashScreen(g.color);
+        setTimeout(()=>{g.hit=false;},3000);
+      }
+      g.flash *= 0.9;
+    }
+
+    // Drain check
+    if(ball.y > H + 60){
+      spawnParticles(ball.x, H-20, '#00ff88', 20, 5);
+      if(ball.extra){
+        balls.splice(bi, 1);
+        continue;
+      } else {
+        ballsLeft--;
+        let activeBalls = balls.length - 1;
+        ballsEl.textContent = ballsLeft + (activeBalls > 0 ? '+' + activeBalls : '');
+        if(ballsLeft <= 0){
+          gameState = 'gameover';
+          showOverlay('GAME OVER', 'FINAL SCORE', score, 'PRESS SPACE TO PLAY AGAIN');
+        } else {
+          // Reset for primary ball, but clear extra balls
+          balls = [balls[0]];
+          resetPrimaryBall();
+          // Reset gate tracking for new life
+          gatesHitThisLife = new Set();
+          extraBallAwarded = false;
+          // Trigger jackpot for new ball
+          triggerJackpot();
+        }
+      }
+    }
+
+    // Ceiling
+    if(ball.y < 0){
+      ball.y = 0;
+      ball.vy = Math.abs(ball.vy) * 0.5;
+    }
+    // Side walls
+    if(ball.x < 0){ ball.x = 0; ball.vx = Math.abs(ball.vx)*WALL_BOUNCE; }
+    if(ball.x > W){ ball.x = W; ball.vx = -Math.abs(ball.vx)*WALL_BOUNCE; }
+  }
+}
+
+function triggerJackpot(){
+  // Pick a random bumper as jackpot
+  let idx = Math.floor(Math.random() * bumpers.length);
+  jackpotBumper = bumpers[idx];
+  jackpotActive = true;
+  jackpotTimer = JACKPOT_DURATION;
+  spawnScorePopup(bumpers[idx].x, bumpers[idx].y - 30, 'JACKPOT!', '#D4A853');
+}
+
+function addScore(pts, x, y){
+  score += pts;
+  scoreEl.textContent = score;
+  if(x !== undefined && y !== undefined){
+    spawnScorePopup(x, y, '+'+pts, '#D4A853');
+  }
 }
 
 function resolveWall(b, w){
@@ -384,6 +532,8 @@ function updateFlippers(dt){
 }
 
 function checkFlipperCollision(flipper){
+  if(!balls[0]) return;
+  let b = balls[0];
   // Endpoint of flipper
   let ex = flipper.pivotX + Math.cos(flipper.angle) * flipper.len;
   let ey = flipper.pivotY + Math.sin(flipper.angle) * flipper.len;
@@ -392,24 +542,24 @@ function checkFlipperCollision(flipper){
   let wx = ex - flipper.pivotX, wy = ey - flipper.pivotY;
   let len = Math.sqrt(wx*wx+wy*wy);
   if(len === 0) return;
-  let t = Math.max(0, Math.min(1, ((ball.x-flipper.pivotX)*wx + (ball.y-flipper.pivotY)*wy)/(len*len)));
+  let t = Math.max(0, Math.min(1, ((b.x-flipper.pivotX)*wx + (b.y-flipper.pivotY)*wy)/(len*len)));
   let cx = flipper.pivotX + t*wx, cy = flipper.pivotY + t*wy;
-  let dx = ball.x-cx, dy = ball.y-cy;
+  let dx = b.x-cx, dy = b.y-cy;
   let dist = Math.sqrt(dx*dx+dy*dy);
-  let minD = ball.r + 7;
+  let minD = b.r + 7;
   if(dist < minD && dist > 0){
     let nx = dx/dist, ny = dy/dist;
     let pen = minD - dist;
-    ball.x += nx * pen;
-    ball.y += ny * pen;
-    let dot = ball.vx*nx + ball.vy*ny;
+    b.x += nx * pen;
+    b.y += ny * pen;
+    let dot = b.vx*nx + b.vy*ny;
     if(dot < 0){
       let bounce = FLIPPER_BOUNCE;
       // Add flipper angular velocity contribution
       let perpX = -ny, perpY = nx;
       let flipperTipSpeed = flipper.angularVel * flipper.len;
-      ball.vx -= 2*dot*nx*bounce + perpX*flipperTipSpeed*0.8;
-      ball.vy -= 2*dot*ny*bounce + perpY*flipperTipSpeed*0.8;
+      b.vx -= 2*dot*nx*bounce + perpX*flipperTipSpeed*0.8;
+      b.vy -= 2*dot*ny*bounce + perpY*flipperTipSpeed*0.8;
     }
     spawnParticles(cx, cy, '#D4A853', 4, 2);
   }
@@ -443,29 +593,31 @@ function draw(){
     ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke();
   }
 
-  // Glow pass for ball
-  ctx.save();
-  ctx.shadowBlur = 0;
-  ctx.globalAlpha = 0.3;
-  for(let i=0;i<ball.trail.length;i++){
-    let t = ball.trail[i];
-    let alpha = (1 - i/ball.trail.length) * 0.4;
-    ctx.globalAlpha = alpha;
-    ctx.fillStyle = '#00ff88';
-    ctx.beginPath();
-    ctx.arc(t.x, t.y, ball.r * (1 - i/ball.trail.length*0.5), 0, Math.PI*2);
-    ctx.fill();
-  }
-  ctx.restore();
+  // Glow pass for all balls
+  for(let ba of balls){
+    ctx.save();
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 0.3;
+    for(let i=0;i<ba.trail.length;i++){
+      let t = ba.trail[i];
+      let alpha = (1 - i/ba.trail.length) * 0.4;
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = ba.extra ? '#D4A853' : '#00ff88';
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, ba.r * (1 - i/ba.trail.length*0.5), 0, Math.PI*2);
+      ctx.fill();
+    }
+    ctx.restore();
 
-  // Ball trail
-  ctx.lineCap = 'round';
-  for(let i=1;i<ball.trail.length;i++){
-    let t0 = ball.trail[i-1], t1 = ball.trail[i];
-    let alpha = (1 - i/ball.trail.length) * 0.5;
-    ctx.strokeStyle = `rgba(0,255,136,${alpha})`;
-    ctx.lineWidth = ball.r * 2 * (1 - i/ball.trail.length);
-    ctx.beginPath(); ctx.moveTo(t0.x,t0.y); ctx.lineTo(t1.x,t1.y); ctx.stroke();
+    // Ball trail
+    ctx.lineCap = 'round';
+    for(let i=1;i<ba.trail.length;i++){
+      let t0 = ba.trail[i-1], t1 = ba.trail[i];
+      let alpha = (1 - i/ba.trail.length) * 0.5;
+      ctx.strokeStyle = ba.extra ? `rgba(212,168,83,${alpha})` : `rgba(0,255,136,${alpha})`;
+      ctx.lineWidth = ba.r * 2 * (1 - i/ba.trail.length);
+      ctx.beginPath(); ctx.moveTo(t0.x,t0.y); ctx.lineTo(t1.x,t1.y); ctx.stroke();
+    }
   }
 
   // Walls
@@ -482,15 +634,28 @@ function draw(){
   // Bumpers
   for(let b of bumpers){
     let glow = b.flash > 0.01;
-    ctx.shadowColor = b.color;
-    ctx.shadowBlur = glow ? 30 + b.flash*20 : 15;
-    ctx.fillStyle = glow ? `rgba(${b.color==='#D4A853'?'212,168,83':'0,255,136'},${0.3+b.flash*0.7})` : `${b.color}33`;
-    ctx.strokeStyle = b.color;
-    ctx.lineWidth = 2;
+    let isJackpot = jackpotActive && b === jackpotBumper;
+    let jpGlow = isJackpot ? (0.5 + Math.sin(Date.now()*0.01)*0.5) : 0;
+    ctx.shadowColor = isJackpot ? '#D4A853' : b.color;
+    ctx.shadowBlur = glow ? 30 + b.flash*20 : (isJackpot ? 35 + jpGlow*20 : 15);
+    ctx.fillStyle = glow ? `rgba(${b.color==='#D4A853'?'212,168,83':'0,255,136'},${0.3+b.flash*0.7})` : (isJackpot ? `rgba(212,168,83,${0.5+jpGlow*0.5})` : `${b.color}33`);
+    ctx.strokeStyle = isJackpot ? '#D4A853' : b.color;
+    ctx.lineWidth = isJackpot ? 4 : 2;
     ctx.beginPath();
-    ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
+    ctx.arc(b.x, b.y, b.r + (isJackpot ? 6 : 0), 0, Math.PI*2);
     ctx.fill();
     ctx.stroke();
+
+    // Jackpot outer ring
+    if(isJackpot){
+      ctx.strokeStyle = '#D4A853';
+      ctx.lineWidth = 2;
+      ctx.globalAlpha = jpGlow;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.r + 12 + jpGlow*6, 0, Math.PI*2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
 
     // Inner glow dot
     ctx.fillStyle = b.color;
@@ -499,6 +664,32 @@ function draw(){
     ctx.fill();
   }
   ctx.shadowBlur = 0;
+
+  // Combo display
+  if(comboDisplay.count >= 3){
+    ctx.font = '700 20px "Syncopate", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#D4A853';
+    ctx.shadowColor = '#D4A853';
+    ctx.shadowBlur = 15;
+    ctx.globalAlpha = Math.min(1, comboDisplay.timer / 500);
+    ctx.fillText('COMBO x' + Math.min(comboDisplay.count, 10), W/2, H * 0.08);
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+  }
+
+  // Jackpot active display
+  if(jackpotActive){
+    ctx.font = '700 14px "Syncopate", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#D4A853';
+    ctx.shadowColor = '#D4A853';
+    ctx.shadowBlur = 10;
+    ctx.globalAlpha = 0.6 + Math.sin(Date.now()*0.008)*0.4;
+    ctx.fillText('★ JACKPOT ACTIVE ★', W/2, H * 0.06);
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+  }
 
   // Gates
   for(let g of gates){
@@ -532,22 +723,34 @@ function draw(){
     ctx.shadowBlur = 0;
   }
 
-  // Ball
-  ctx.shadowColor = '#00ff88';
-  ctx.shadowBlur = 25;
-  ctx.fillStyle = '#00ff88';
-  ctx.beginPath();
-  ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI*2);
-  ctx.fill();
-  ctx.fillStyle = '#ffffff';
-  ctx.beginPath();
-  ctx.arc(ball.x - 3, ball.y - 3, ball.r * 0.35, 0, Math.PI*2);
-  ctx.fill();
-  ctx.shadowBlur = 0;
+  // Draw all balls
+  for(let bi = 0; bi < balls.length; bi++){
+    let ba = balls[bi];
+    let ballColor = ba.extra ? '#D4A853' : '#00ff88';
+    ctx.shadowColor = ballColor;
+    ctx.shadowBlur = 25;
+    ctx.fillStyle = ballColor;
+    ctx.beginPath();
+    ctx.arc(ba.x, ba.y, ba.r, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(ba.x - 3, ba.y - 3, ba.r * 0.35, 0, Math.PI*2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Ball count badge for extra balls
+    if(ba.extra){
+      ctx.fillStyle = '#0a0a0a';
+      ctx.font = '700 10px "Syncopate", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('x'+bi, ba.x, ba.y + 4);
+    }
+  }
 
   // Launch lane indicator
-  if(!launched){
-    let lx = ball.startX, ly = ball.startY;
+  if(!launched && balls[0]){
+    let lx = balls[0].startX, ly = balls[0].startY;
     ctx.strokeStyle = 'rgba(212,168,83,0.3)';
     ctx.lineWidth = 1;
     ctx.setLineDash([4,4]);
@@ -605,7 +808,22 @@ function startGame(){
   ballsEl.textContent = '3';
   gameState = 'playing';
   launched = false;
-  resetBall();
+  // Initialize balls array
+  balls = [];
+  balls[0] = makeBall(0, 0, 0, 0);
+  balls[0].extra = false;
+  // Reset all systems
+  comboCount = 0;
+  comboTimer = 0;
+  comboDisplay.count = 0;
+  jackpotActive = false;
+  jackpotTimer = 0;
+  jackpotBumper = null;
+  gatesHitThisLife = new Set();
+  extraBallAwarded = false;
+  // Skill shot: random gate lit on launch
+  skillShotTarget = Math.floor(Math.random() * gates.length);
+  skillShotTimer = 3000;
   buildLevel();
   hideOverlay();
 }
@@ -649,8 +867,12 @@ window.addEventListener('keydown', e=>{
   if(e.code === 'KeyR'){
     if(gameState === 'playing'){
       ballsLeft = 3;
-      ballsEl.textContent = 3;
-      resetBall();
+      ballsEl.textContent = '3';
+      balls = [balls[0] || makeBall(0,0,0,0)];
+      resetPrimaryBall();
+      gatesHitThisLife = new Set();
+      extraBallAwarded = false;
+      triggerJackpot();
     }
   }
 });
