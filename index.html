@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VOID BALL</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syncopate:wght@400;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a0a;overflow:hidden;font-family:'Space Mono',monospace;user-select:none}
+canvas{display:block;position:fixed;top:0;left:0}
+#ui{position:fixed;top:0;left:0;width:100%;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;z-index:10;pointer-events:none}
+.hud{font-family:'Syncopate',sans-serif;color:#D4A853;font-size:13px;letter-spacing:3px;text-shadow:0 0 12px #D4A85399}
+.hud span{color:#00ff88;text-shadow:0 0 12px #00ff8866}
+#overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(10,10,10,0.92);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:20;transition:opacity 0.4s}
+#overlay.hidden{opacity:0;pointer-events:none}
+#overlay h1{font-family:'Syncopate',sans-serif;font-size:clamp(32px,6vw,64px);color:#D4A853;letter-spacing:8px;text-shadow:0 0 30px #D4A85388;margin-bottom:8px}
+#overlay p{font-family:'Space Mono',monospace;font-size:13px;color:#00ff88;letter-spacing:2px;margin:6px 0;opacity:0.8}
+#overlay .sub{font-size:11px;color:#888;margin-top:24px;letter-spacing:1px}
+#overlay .big{font-family:'Syncopate',sans-serif;font-size:clamp(48px,10vw,100px);color:#00ff88;text-shadow:0 0 40px #00ff8888;margin:16px 0}
+.btn{padding:12px 32px;background:transparent;border:1px solid #D4A853;color:#D4A853;font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:4px;cursor:pointer;margin-top:24px;transition:all 0.2s;text-transform:uppercase}
+.btn:hover{background:#D4A85322;box-shadow:0 0 20px #D4A85344}
+#flash{position:fixed;top:0;left:0;width:100%;height:100%;background:#00ff88;opacity:0;pointer-events:none;z-index:15;transition:opacity 0.1s}
+#instructions{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);font-family:'Space Mono',monospace;font-size:10px;color:#555;letter-spacing:1px;z-index:10;pointer-events:none}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">
+<div class="hud">SCORE <span id="score">0</span></div>
+<div class="hud">WAVE <span id="wave">1</span></div>
+<div class="hud">BALLS <span id="balls">3</span></div>
+</div>
+<div id="flash"></div>
+<div id="overlay">
+<div id="overlayContent"></div>
+</div>
+<div id="instructions">DRAG LEFT/RIGHT TO CONTROL FLIPPERS &nbsp;|&nbsp; SPACE TO LAUNCH &nbsp;|&nbsp; R TO RESTART</div>
+<script>
+const c = document.getElementById('c');
+const ctx = c.getContext('2d');
+let W, H;
+
+const scoreEl = document.getElementById('score');
+const waveEl = document.getElementById('wave');
+const ballsEl = document.getElementById('balls');
+const overlay = document.getElementById('overlay');
+const overlayContent = document.getElementById('overlayContent');
+const flash = document.getElementById('flash');
+
+let score = 0;
+let wave = 1;
+let ballsLeft = 3;
+let gameState = 'start';
+let launched = false;
+let autoLaunchTimer = 0;
+
+const GRAVITY = 0.22;
+const FLIPPER_FORCE = 16;
+const FLIPPER_ANGULAR_VEL = 0.35;
+const BALL_RADIUS = 10;
+const WALL_BOUNCE = 0.72;
+const FLIPPER_BOUNCE = 1.4;
+const MAX_VEL = 22;
+
+let ball = {x:0,y:0,vx:0,vy:0,r:BALL_RADIUS,trail:[],glow:1};
+let leftFlipper = {x:0,y:0,len:0,angle:0.4,targetAngle:0.4,angularVel:0,side:'left'};
+let rightFlipper = {x:0,y:0,len:0,angle:2.74,targetAngle:2.74,angularVel:0,side:'right'};
+let walls = [];
+let bumpers = [];
+let drains = [];
+let gates = [];
+let particles = [];
+let trailParticles = [];
+let scorePopups = [];
+let ballLaunchVy = -18;
+
+let keys = {};
+let mouseX = 0;
+let mouseY = 0;
+let mouseDown = false;
+
+let drainZone = {x:0,y:0,w:0,h:0};
+
+let ballImg;
+let glowCanvas, glowCtx;
+
+function resize(){
+  W = c.width = window.innerWidth;
+  H = c.height = window.innerHeight;
+  buildLevel();
+  if(glowCanvas) glowCanvas.width = W, glowCanvas.height = H;
+}
+
+function buildLevel(){
+  const cx = W/2;
+  const cy = H/2;
+  const tableW = Math.min(W * 0.55, 480);
+  const tableH = Math.min(H * 0.78, 680);
+  const tableLeft = cx - tableW/2;
+  const tableRight = cx + tableW/2;
+  const tableTop = H * 0.12;
+  const tableBottom = tableTop + tableH;
+  const wallThick = 12;
+
+  // Build walls
+  walls = [];
+
+  // Left wall
+  walls.push({x1:tableLeft, y1:tableTop+40, x2:tableLeft, y2:tableBottom-wallThick, thick:wallThick});
+  // Right wall
+  walls.push({x1:tableRight, y1:tableTop+40, x2:tableRight, y2:tableBottom-wallThick, thick:wallThick});
+  // Top wall (angled to form throat)
+  walls.push({x1:tableLeft, y1:tableTop+40, x2:tableLeft+60, y2:tableTop, thick:wallThick});
+  walls.push({x1:tableRight-60, y1:tableTop, x2:tableRight, y2:tableTop+40, thick:wallThick});
+  // Top center piece
+  walls.push({x1:cx-40, y1:tableTop, x2:cx+40, y2:tableTop, thick:wallThick});
+  // Upper side walls
+  walls.push({x1:tableLeft, y1:tableTop+40, x2:tableLeft+wallThick, y2:tableTop+40, thick:wallThick});
+  walls.push({x1:tableRight-wallThick, y1:tableTop+40, x2:tableRight, y2:tableTop+40, thick:wallThick});
+
+  // Bottom wall (with gap for drain)
+  const drainW = 80;
+  const drainStart = cx - drainW/2;
+  walls.push({x1:tableLeft, y1:tableBottom, x2:drainStart, y2:tableBottom, thick:wallThick});
+  walls.push({x1:drainStart+drainW, y1:tableBottom, x2:tableRight, y2:tableBottom, thick:wallThick});
+
+  // Side bumpers
+  const bumperR = 22;
+  bumpers = [];
+  bumpers.push({x:tableLeft+50, y:tableTop+140, r:bumperR, hp:1, color:'#D4A853', flash:0, score:100});
+  bumpers.push({x:tableRight-50, y:tableTop+140, r:bumperR, hp:1, color:'#00ff88', flash:0, score:100});
+  bumpers.push({x:cx, y:tableTop+100, r:bumperR, hp:1, color:'#D4A853', flash:0, score:100});
+
+  bumpers.push({x:tableLeft+40, y:tableTop+240, r:bumperR, hp:1, color:'#00ff88', flash:0, score:150});
+  bumpers.push({x:tableRight-40, y:tableTop+240, r:bumperR, hp:1, color:'#00ff88', flash:0, score:150});
+
+  // Mid bumpers
+  const midBumpR = 18;
+  bumpers.push({x:cx-80, y:tableTop+180, r:midBumpR, hp:1, color:'#D4A853', flash:0, score:80});
+  bumpers.push({x:cx+80, y:tableTop+180, r:midBumpR, hp:1, color:'#00ff88', flash:0, score:80});
+  bumpers.push({x:cx, y:tableTop+260, r:midBumpR, hp:1, color:'#D4A853', flash:0, score:120});
+
+  // Lower bumpers
+  bumpers.push({x:cx-60, y:tableTop+360, r:20, hp:1, color:'#00ff88', flash:0, score:100});
+  bumpers.push({x:cx+60, y:tableTop+360, r:20, hp:1, color:'#D4A853', flash:0, score:100});
+
+  // Flippers
+  const flipY = tableBottom - 60;
+  const flipLen = (tableW * 0.32);
+  leftFlipper = {
+    pivotX: tableLeft + flipLen * 0.55,
+    pivotY: flipY,
+    len: flipLen,
+    angle: 0.42,
+    targetAngle: 0.42,
+    minAngle: 0.08,
+    maxAngle: 1.15,
+    angularVel: 0,
+    side: 'left'
+  };
+  rightFlipper = {
+    pivotX: tableRight - flipLen * 0.55,
+    pivotY: flipY,
+    len: flipLen,
+    angle: Math.PI - 0.42,
+    targetAngle: Math.PI - 0.42,
+    minAngle: Math.PI - 1.15,
+    maxAngle: Math.PI - 0.08,
+    angularVel: 0,
+    side: 'right'
+  };
+
+  // Gates (neon rings to hit through)
+  gates = [];
+  const gateR = 14;
+  gates.push({x:cx-30, y:tableTop+300, r:gateR, color:'#D4A853', flash:0, hit:false, score:50});
+  gates.push({x:cx+30, y:tableTop+300, r:gateR, color:'#00ff88', flash:0, hit:false, score:50});
+  gates.push({x:cx, y:tableTop+440, r:gateR, color:'#D4A853', flash:0, hit:false, score:200});
+
+  // Ball launch position
+  ball.startX = tableRight - 35;
+  ball.startY = flipY - 20;
+
+  drainZone = {x:cx - drainW/2, y:tableBottom-10, w:drainW, h:40};
+
+  if(!launched || gameState === 'start'){
+    ball.x = ball.startX;
+    ball.y = ball.startY;
+    ball.vx = 0;
+    ball.vy = 0;
+  }
+}
+
+function resetBall(){
+  launched = false;
+  ball.x = ball.startX;
+  ball.y = ball.startY;
+  ball.vx = 0;
+  ball.vy = 0;
+  ball.trail = [];
+  ball.glow = 1;
+  autoLaunchTimer = 0;
+}
+
+function launchBall(){
+  if(!launched && ballsLeft > 0){
+    launched = true;
+    ball.vx = -1 + Math.random() * 2;
+    ball.vy = ballLaunchVy;
+  }
+}
+
+function spawnParticles(x,y,color,count,spread){
+  for(let i=0;i<count;i++){
+    let ang = Math.random() * Math.PI * 2;
+    let spd = Math.random() * (spread || 4) + 1;
+    particles.push({
+      x,y,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
+      life:1,decay:0.02+Math.random()*0.03,
+      color,size:Math.random()*3+1
+    });
+  }
+}
+
+function spawnScorePopup(x,y,text,color){
+  scorePopups.push({x,y,text,color,life:1,vy:-2});
+}
+
+function flashScreen(color){
+  flash.style.background = color;
+  flash.style.opacity = '0.15';
+  setTimeout(()=>{flash.style.opacity='0';},80);
+}
+
+function addScore(pts,x,y){
+  score += pts;
+  scoreEl.textContent = score;
+  spawnScorePopup(x,y,'+'+pts,'#D4A853');
+}
+
+function updateBall(dt){
+  if(!launched){
+    autoLaunchTimer += dt;
+    if(autoLaunchTimer > 2.5 && gameState === 'playing') launchBall();
+    return;
+  }
+
+  // Gravity
+  ball.vy += GRAVITY;
+
+  // Clamp velocity
+  let speed = Math.sqrt(ball.vx*ball.vx+ball.vy*ball.vy);
+  if(speed > MAX_VEL){
+    ball.vx = (ball.vx/speed)*MAX_VEL;
+    ball.vy = (ball.vy/speed)*MAX_VEL;
+  }
+
+  // Move
+  ball.x += ball.vx;
+  ball.y += ball.vy;
+
+  // Trail
+  ball.trail.unshift({x:ball.x,y:ball.y});
+  if(ball.trail.length > 28) ball.trail.pop();
+
+  // Wall collisions
+  for(let w of walls){
+    resolveWall(ball, w);
+  }
+
+  // Bumper collisions
+  for(let b of bumpers){
+    let dx = ball.x - b.x;
+    let dy = ball.y - b.y;
+    let dist = Math.sqrt(dx*dx+dy*dy);
+    let minD = ball.r + b.r;
+    if(dist < minD && dist > 0){
+      let nx = dx/dist, ny = dy/dist;
+      let overlap = minD - dist;
+      ball.x += nx * overlap;
+      ball.y += ny * overlap;
+      let dvx = ball.vx - nx * 6;
+      let dvy = ball.vy - ny * 6;
+      ball.vx += nx * 6;
+      ball.vy += ny * 6;
+      let spd = Math.sqrt(dvx*dvx+dvy*dvy)*0.4;
+      ball.vx += nx * spd;
+      ball.vy += ny * spd;
+      b.flash = 1;
+      let pts = b.score * wave;
+      addScore(pts, b.x, b.y - b.r);
+      spawnParticles(b.x, b.y, b.color, 12, 5);
+      flashScreen(b.color);
+    }
+    b.flash *= 0.88;
+  }
+
+  // Gate collisions
+  for(let g of gates){
+    let dx = ball.x - g.x;
+    let dy = ball.y - g.y;
+    let dist = Math.sqrt(dx*dx+dy*dy);
+    if(dist < ball.r + g.r && !g.hit){
+      g.hit = true;
+      g.flash = 1;
+      ball.vx += dx/dist * 3;
+      ball.vy += dy/dist * 3;
+      addScore(g.score * wave, g.x, g.y);
+      spawnParticles(g.x, g.y, g.color, 20, 6);
+      flashScreen(g.color);
+      setTimeout(()=>{g.hit=false;},3000);
+    }
+    g.flash *= 0.9;
+  }
+
+  // Drain check
+  if(ball.y > H + 60){
+    ballsLeft--;
+    ballsEl.textContent = ballsLeft;
+    spawnParticles(ball.x, H-20, '#00ff88', 20, 5);
+    if(ballsLeft <= 0){
+      gameState = 'gameover';
+      showOverlay('GAME OVER', 'FINAL SCORE', score, 'PRESS SPACE TO PLAY AGAIN');
+    } else {
+      resetBall();
+    }
+  }
+
+  // Ceiling
+  if(ball.y < 0){
+    ball.y = 0;
+    ball.vy = Math.abs(ball.vy) * 0.5;
+  }
+  // Side walls
+  if(ball.x < 0){ ball.x = 0; ball.vx = Math.abs(ball.vx)*WALL_BOUNCE; }
+  if(ball.x > W){ ball.x = W; ball.vx = -Math.abs(ball.vx)*WALL_BOUNCE; }
+}
+
+function resolveWall(b, w){
+  // Treat wall as line segment from (x1,y1) to (x2,y2)
+  let wx = w.x2 - w.x1, wy = w.y2 - w.y1;
+  let len = Math.sqrt(wx*wx+wy*wy);
+  if(len === 0) return;
+  let nx = -wy/len, ny = wx/len; // normal
+  let t = Math.max(0, Math.min(1, ((b.x-w.x1)*wx + (b.y-w.y1)*wy)/(len*len)));
+  let cx = w.x1 + t*wx, cy = w.y1 + t*wy;
+  let dx = b.x-cx, dy = b.y-cy;
+  let dist = Math.sqrt(dx*dx+dy*dy);
+  let minD = b.r + w.thick/2;
+  if(dist < minD && dist > 0){
+    let pen = minD - dist;
+    let nx2 = dx/dist, ny2 = dy/dist;
+    b.x += nx2 * pen;
+    b.y += ny2 * pen;
+    let dot = b.vx*nx2 + b.vy*ny2;
+    if(dot < 0){
+      b.vx -= 2*dot*nx2 * WALL_BOUNCE;
+      b.vy -= 2*dot*ny2 * WALL_BOUNCE;
+    }
+  }
+}
+
+function updateFlippers(dt){
+  const inputForce = (mouseDown ? 1 : 0);
+
+  // Left flipper
+  if(leftFlipper.side === 'left'){
+    leftFlipper.targetAngle = inputForce ? leftFlipper.minAngle : 0.42;
+  }
+  // Right flipper
+  if(rightFlipper.side === 'right'){
+    rightFlipper.targetAngle = inputForce ? rightFlipper.maxAngle : Math.PI - 0.42;
+  }
+
+  // Spring physics for flippers
+  for(let f of [leftFlipper, rightFlipper]){
+    let diff = f.targetAngle - f.angle;
+    f.angularVel += diff * FLIPPER_ANGULAR_VEL * 3;
+    f.angularVel *= 0.75;
+    f.angle += f.angularVel;
+  }
+}
+
+function checkFlipperCollision(flipper){
+  // Endpoint of flipper
+  let ex = flipper.pivotX + Math.cos(flipper.angle) * flipper.len;
+  let ey = flipper.pivotY + Math.sin(flipper.angle) * flipper.len;
+
+  // Check distance from ball to flipper line segment
+  let wx = ex - flipper.pivotX, wy = ey - flipper.pivotY;
+  let len = Math.sqrt(wx*wx+wy*wy);
+  if(len === 0) return;
+  let t = Math.max(0, Math.min(1, ((ball.x-flipper.pivotX)*wx + (ball.y-flipper.pivotY)*wy)/(len*len)));
+  let cx = flipper.pivotX + t*wx, cy = flipper.pivotY + t*wy;
+  let dx = ball.x-cx, dy = ball.y-cy;
+  let dist = Math.sqrt(dx*dx+dy*dy);
+  let minD = ball.r + 7;
+  if(dist < minD && dist > 0){
+    let nx = dx/dist, ny = dy/dist;
+    let pen = minD - dist;
+    ball.x += nx * pen;
+    ball.y += ny * pen;
+    let dot = ball.vx*nx + ball.vy*ny;
+    if(dot < 0){
+      let bounce = FLIPPER_BOUNCE;
+      // Add flipper angular velocity contribution
+      let perpX = -ny, perpY = nx;
+      let flipperTipSpeed = flipper.angularVel * flipper.len;
+      ball.vx -= 2*dot*nx*bounce + perpX*flipperTipSpeed*0.8;
+      ball.vy -= 2*dot*ny*bounce + perpY*flipperTipSpeed*0.8;
+    }
+    spawnParticles(cx, cy, '#D4A853', 4, 2);
+  }
+}
+
+function updateParticles(){
+  particles = particles.filter(p=>{
+    p.x += p.vx; p.y += p.vy;
+    p.vy += 0.08;
+    p.vx *= 0.97; p.vy *= 0.97;
+    p.life -= p.decay;
+    return p.life > 0;
+  });
+  scorePopups = scorePopups.filter(p=>{
+    p.y += p.vy; p.life -= 0.025;
+    return p.life > 0;
+  });
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+
+  // Background grid
+  ctx.strokeStyle = 'rgba(212,168,83,0.04)';
+  ctx.lineWidth = 1;
+  let gridSize = 40;
+  for(let x=0;x<W;x+=gridSize){
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke();
+  }
+  for(let y=0;y<H;y+=gridSize){
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke();
+  }
+
+  // Glow pass for ball
+  ctx.save();
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 0.3;
+  for(let i=0;i<ball.trail.length;i++){
+    let t = ball.trail[i];
+    let alpha = (1 - i/ball.trail.length) * 0.4;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#00ff88';
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, ball.r * (1 - i/ball.trail.length*0.5), 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Ball trail
+  ctx.lineCap = 'round';
+  for(let i=1;i<ball.trail.length;i++){
+    let t0 = ball.trail[i-1], t1 = ball.trail[i];
+    let alpha = (1 - i/ball.trail.length) * 0.5;
+    ctx.strokeStyle = `rgba(0,255,136,${alpha})`;
+    ctx.lineWidth = ball.r * 2 * (1 - i/ball.trail.length);
+    ctx.beginPath(); ctx.moveTo(t0.x,t0.y); ctx.lineTo(t1.x,t1.y); ctx.stroke();
+  }
+
+  // Walls
+  ctx.strokeStyle = '#D4A853';
+  ctx.lineWidth = 12;
+  ctx.lineCap = 'round';
+  ctx.shadowColor = '#D4A853';
+  ctx.shadowBlur = 12;
+  for(let w of walls){
+    ctx.beginPath(); ctx.moveTo(w.x1,w.y1); ctx.lineTo(w.x2,w.y2); ctx.stroke();
+  }
+  ctx.shadowBlur = 0;
+
+  // Bumpers
+  for(let b of bumpers){
+    let glow = b.flash > 0.01;
+    ctx.shadowColor = b.color;
+    ctx.shadowBlur = glow ? 30 + b.flash*20 : 15;
+    ctx.fillStyle = glow ? `rgba(${b.color==='#D4A853'?'212,168,83':'0,255,136'},${0.3+b.flash*0.7})` : `${b.color}33`;
+    ctx.strokeStyle = b.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Inner glow dot
+    ctx.fillStyle = b.color;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r * 0.4, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+
+  // Gates
+  for(let g of gates){
+    let alpha = g.hit ? 0.3 : (0.5 + Math.sin(Date.now()*0.005)*0.2);
+    ctx.strokeStyle = g.color;
+    ctx.lineWidth = 2;
+    ctx.shadowColor = g.color;
+    ctx.shadowBlur = g.flash > 0.1 ? 25 : 10;
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.arc(g.x, g.y, g.r, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+  }
+
+  // Flippers
+  for(let f of [leftFlipper, rightFlipper]){
+    let ex = f.pivotX + Math.cos(f.angle) * f.len;
+    let ey = f.pivotY + Math.sin(f.angle) * f.len;
+    let moving = Math.abs(f.angularVel) > 0.02;
+    ctx.strokeStyle = moving ? '#00ff88' : '#D4A853';
+    ctx.lineWidth = 14;
+    ctx.lineCap = 'round';
+    ctx.shadowColor = moving ? '#00ff88' : '#D4A853';
+    ctx.shadowBlur = moving ? 20 : 12;
+    ctx.beginPath(); ctx.moveTo(f.pivotX, f.pivotY); ctx.lineTo(ex, ey); ctx.stroke();
+    // Pivot
+    ctx.fillStyle = '#D4A853';
+    ctx.beginPath(); ctx.arc(f.pivotX, f.pivotY, 9, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // Ball
+  ctx.shadowColor = '#00ff88';
+  ctx.shadowBlur = 25;
+  ctx.fillStyle = '#00ff88';
+  ctx.beginPath();
+  ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(ball.x - 3, ball.y - 3, ball.r * 0.35, 0, Math.PI*2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Launch lane indicator
+  if(!launched){
+    let lx = ball.startX, ly = ball.startY;
+    ctx.strokeStyle = 'rgba(212,168,83,0.3)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4,4]);
+    ctx.beginPath(); ctx.moveTo(lx, ly-30); ctx.lineTo(lx, ly+30); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Particles
+  for(let p of particles){
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0;
+
+  // Score popups
+  ctx.font = '700 16px "Syncopate", sans-serif';
+  ctx.textAlign = 'center';
+  for(let p of scorePopups){
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 10;
+    ctx.fillText(p.text, p.x, p.y);
+  }
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0;
+}
+
+function showOverlay(title, sub, value, action){
+  overlayContent.innerHTML = `
+    <h1>${title}</h1>
+    <p>${sub}</p>
+    <div class="big">${value}</div>
+    <p class="sub">${action}</p>
+  `;
+  overlay.classList.remove('hidden');
+}
+
+function hideOverlay(){
+  overlay.classList.add('hidden');
+}
+
+function startGame(){
+  score = 0;
+  wave = 1;
+  ballsLeft = 3;
+  scoreEl.textContent = '0';
+  waveEl.textContent = '1';
+  ballsEl.textContent = '3';
+  gameState = 'playing';
+  launched = false;
+  resetBall();
+  buildLevel();
+  hideOverlay();
+}
+
+let lastTime = 0;
+function loop(ts){
+  let dt = Math.min((ts - lastTime)/1000, 0.05);
+  lastTime = ts;
+
+  if(gameState === 'playing'){
+    updateFlippers(dt);
+    checkFlipperCollision(leftFlipper);
+    checkFlipperCollision(rightFlipper);
+    updateBall(dt);
+    updateParticles();
+
+    // Wave progression
+    if(score > wave * 2000){
+      wave++;
+      waveEl.textContent = wave;
+      flashScreen('#D4A853');
+      spawnScorePopup(W/2, H/2, 'WAVE '+wave, '#D4A853');
+    }
+  }
+
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// Input
+window.addEventListener('keydown', e=>{
+  keys[e.code] = true;
+  if(e.code === 'Space'){
+    e.preventDefault();
+    if(gameState === 'start' || gameState === 'gameover'){
+      startGame();
+    } else if(gameState === 'playing'){
+      launchBall();
+    }
+  }
+  if(e.code === 'KeyR'){
+    if(gameState === 'playing'){
+      ballsLeft = 3;
+      ballsEl.textContent = 3;
+      resetBall();
+    }
+  }
+});
+window.addEventListener('keyup', e=>{ keys[e.code] = false; });
+
+window.addEventListener('mousedown', e=>{
+  mouseDown = true;
+  mouseX = e.clientX; mouseY = e.clientY;
+});
+window.addEventListener('mouseup', ()=>{ mouseDown = false; });
+window.addEventListener('mousemove', e=>{ mouseX = e.clientX; mouseY = e.clientY; });
+
+window.addEventListener('touchstart', e=>{
+  mouseDown = true;
+  mouseX = e.touches[0].clientX; mouseY = e.touches[0].clientY;
+  if(gameState === 'start' || gameState === 'gameover') startGame();
+  else launchBall();
+}, {passive:true});
+window.addEventListener('touchend', ()=>{ mouseDown = false; });
+window.addEventListener('touchmove', e=>{ mouseX = e.touches[0].clientX; mouseY = e.touches[0].clientY; }, {passive:true});
+
+window.addEventListener('resize', resize);
+
+// Init
+resize();
+showOverlay('VOID BALL', 'NEON PINBALL', '', 'CLICK OR PRESS SPACE TO START');
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
