@@ -13,16 +13,25 @@ canvas{display:block;position:fixed;top:0;left:0}
 #ui{position:fixed;top:0;left:0;width:100%;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;z-index:10;pointer-events:none}
 .hud{font-family:'Syncopate',sans-serif;color:#D4A853;font-size:13px;letter-spacing:3px;text-shadow:0 0 12px #D4A85399}
 .hud span{color:#00ff88;text-shadow:0 0 12px #00ff8866}
+#combo-hud{position:fixed;top:52px;left:0;width:100%;padding:0 24px;display:flex;justify-content:space-between;align-items:center;z-index:10;pointer-events:none}
+#charge-bar-wrap{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);display:flex;gap:12px;z-index:10;pointer-events:none}
+.charge-wrap{display:flex;flex-direction:column;align-items:center;gap:2px}
+.charge-label{font-family:'Syncopate',sans-serif;font-size:8px;color:#D4A853;letter-spacing:2px}
+.charge-bar{width:60px;height:6px;background:rgba(212,168,83,0.15);border:1px solid #D4A85355;border-radius:3px;overflow:hidden}
+.charge-fill{height:100%;background:linear-gradient(90deg,#00ff88,#D4A853);width:0%;transition:width 0.1s}
 #overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(10,10,10,0.92);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:20;transition:opacity 0.4s}
 #overlay.hidden{opacity:0;pointer-events:none}
 #overlay h1{font-family:'Syncopate',sans-serif;font-size:clamp(32px,6vw,64px);color:#D4A853;letter-spacing:8px;text-shadow:0 0 30px #D4A85388;margin-bottom:8px}
 #overlay p{font-family:'Space Mono',monospace;font-size:13px;color:#00ff88;letter-spacing:2px;margin:6px 0;opacity:0.8}
 #overlay .sub{font-size:11px;color:#888;margin-top:24px;letter-spacing:1px}
 #overlay .big{font-family:'Syncopate',sans-serif;font-size:clamp(48px,10vw,100px);color:#00ff88;text-shadow:0 0 40px #00ff8888;margin:16px 0}
+#overlay .slot-display{font-family:'Syncopate',sans-serif;font-size:28px;color:#D4A853;letter-spacing:12px;text-shadow:0 0 20px #D4A853;margin:8px 0;min-height:36px}
+#overlay .slot-bonus{font-family:'Space Mono',monospace;font-size:12px;color:#00ff88;letter-spacing:3px;margin-top:4px;opacity:0.8}
 .btn{padding:12px 32px;background:transparent;border:1px solid #D4A853;color:#D4A853;font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:4px;cursor:pointer;margin-top:24px;transition:all 0.2s;text-transform:uppercase}
 .btn:hover{background:#D4A85322;box-shadow:0 0 20px #D4A85344}
 #flash{position:fixed;top:0;left:0;width:100%;height:100%;background:#00ff88;opacity:0;pointer-events:none;z-index:15;transition:opacity 0.1s}
-#instructions{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);font-family:'Space Mono',monospace;font-size:10px;color:#555;letter-spacing:1px;z-index:10;pointer-events:none}
+#instructions{position:fixed;bottom:36px;left:50%;transform:translateX(-50%);font-family:'Space Mono',monospace;font-size:10px;color:#555;letter-spacing:1px;z-index:10;pointer-events:none;text-align:center}
+#drain-saver{position:fixed;bottom:0;left:50%;transform:translateX(-50%);font-family:'Syncopate',sans-serif;font-size:10px;color:#00ff88;letter-spacing:3px;z-index:10;pointer-events:none;opacity:0;transition:opacity 0.3s;text-shadow:0 0 10px #00ff88}
 </style>
 </head>
 <body>
@@ -32,7 +41,22 @@ canvas{display:block;position:fixed;top:0;left:0}
 <div class="hud">WAVE <span id="wave">1</span></div>
 <div class="hud">BALLS <span id="balls">3</span></div>
 </div>
+<div id="combo-hud">
+<div class="hud" id="mult-hud" style="opacity:0">MULTI <span id="mult-val">x1</span></div>
+<div class="hud" id="slot-hud" style="opacity:0">SLOT <span id="slot-val">----</span></div>
+</div>
+<div id="charge-bar-wrap">
+<div class="charge-wrap">
+<div class="charge-label">L-FLIP</div>
+<div class="charge-bar"><div class="charge-fill" id="lcharge"></div></div>
+</div>
+<div class="charge-wrap">
+<div class="charge-label">R-FLIP</div>
+<div class="charge-bar"><div class="charge-fill" id="rcharge"></div></div>
+</div>
+</div>
 <div id="flash"></div>
+<div id="drain-saver">DRAIN SAVER ACTIVE</div>
 <div id="overlay">
 <div id="overlayContent"></div>
 </div>
@@ -48,6 +72,13 @@ const ballsEl = document.getElementById('balls');
 const overlay = document.getElementById('overlay');
 const overlayContent = document.getElementById('overlayContent');
 const flash = document.getElementById('flash');
+const multHudEl = document.getElementById('mult-hud');
+const multValEl = document.getElementById('mult-val');
+const slotHudEl = document.getElementById('slot-hud');
+const slotValEl = document.getElementById('slot-val');
+const lchargeEl = document.getElementById('lcharge');
+const rchargeEl = document.getElementById('rcharge');
+const drainSaverEl = document.getElementById('drain-saver');
 
 let score = 0;
 let wave = 1;
@@ -57,13 +88,13 @@ let launched = false;
 let autoLaunchTimer = 0;
 
 // Multiball
-let balls = []; // array of ball objects
+let balls = [];
 const MAX_BALLS = 3;
 
 // Combo system
 let comboCount = 0;
 let comboTimer = 0;
-const COMBO_WINDOW = 1500; // ms
+const COMBO_WINDOW = 1500;
 let comboDisplay = {count:0,timer:0};
 
 // Jackpot
@@ -72,22 +103,48 @@ let jackpotTimer = 0;
 const JACKPOT_DURATION = 8000;
 let jackpotBumper = null;
 
-// Extra ball tracker (gates in one life)
+// Extra ball tracker
 let gatesHitThisLife = new Set();
 let extraBallAwarded = false;
 let skillShotTarget = null;
 let skillShotTimer = 0;
+
+// Charge flipper system
+let leftCharge = 0;
+let rightCharge = 0;
+const MAX_CHARGE = 100;
+const CHARGE_DECAY = 15; // per second when not hitting
+const CHARGE_GAIN = 20; // per bumper hit assigned to flipper
+
+// Drain saver
+let drainSaverActive = false;
+let drainSaverTimer = 0;
+const DRAIN_SAVER_DURATION = 3000; // ms
+
+// Multiplier zones
+let multZones = []; // {x,y,r,mult,flash}
+let activeMult = 1;
+let multTimer = 0;
+
+// Slot system
+const SLOT_WORDS = {
+  'VOID': {bonus:500, color:'#00ff88', text:'VOID BONUS!'},
+  'BALL': {bonus:300, color:'#D4A853', text:'EXTRA BALL!'},
+  'NEON': {bonus:400, color:'#00ff88', text:'NEON x2 MULTI!'},
+  'GOLD': {bonus:600, color:'#D4A853', text:'GOLD RUSH!'},
+  'WAVE': {bonus:200, color:'#00ff88', text:'WAVE BOOST!'}
+};
+let slotLetters = [];
+const SLOT_SIZE = 4;
 
 const GRAVITY = 0.22;
 const FLIPPER_FORCE = 16;
 const FLIPPER_ANGULAR_VEL = 0.35;
 const BALL_RADIUS = 10;
 const WALL_BOUNCE = 0.72;
-const FLIPPER_BOUNCE = 1.4;
+const FLIPPER_BOUNCE = 1.5;
 const MAX_VEL = 22;
 
-// balls array — index 0 is the primary ball, extra balls are [1..]
-let balls = [];
 function makeBall(x,y,vx,vy){
   return {x,y,vx,vy,r:BALL_RADIUS,trail:[],glow:1,id:Math.random(),extra:false};
 }
@@ -103,9 +160,7 @@ function launchBall(){
     launched = true;
     balls[0].vx = -1 + Math.random() * 2;
     balls[0].vy = ballLaunchVy;
-    // Skill shot check
     if(skillShotTarget !== null && skillShotTimer > 0){
-      // Skill shot: if launch goes through the right gate
       addScore(500, balls[0].x, balls[0].y - 20);
       spawnScorePopup(balls[0].x, balls[0].y - 40, 'SKILL SHOT +500', '#00ff88');
       flashScreen('#00ff88');
@@ -140,14 +195,10 @@ let mouseDown = false;
 
 let drainZone = {x:0,y:0,w:0,h:0};
 
-let ballImg;
-let glowCanvas, glowCtx;
-
 function resize(){
   W = c.width = window.innerWidth;
   H = c.height = window.innerHeight;
   buildLevel();
-  if(glowCanvas) glowCanvas.width = W, glowCanvas.height = H;
 }
 
 function buildLevel(){
@@ -161,49 +212,37 @@ function buildLevel(){
   const tableBottom = tableTop + tableH;
   const wallThick = 12;
 
-  // Build walls
   walls = [];
-
-  // Left wall
   walls.push({x1:tableLeft, y1:tableTop+40, x2:tableLeft, y2:tableBottom-wallThick, thick:wallThick});
-  // Right wall
   walls.push({x1:tableRight, y1:tableTop+40, x2:tableRight, y2:tableBottom-wallThick, thick:wallThick});
-  // Top wall (angled to form throat)
   walls.push({x1:tableLeft, y1:tableTop+40, x2:tableLeft+60, y2:tableTop, thick:wallThick});
   walls.push({x1:tableRight-60, y1:tableTop, x2:tableRight, y2:tableTop+40, thick:wallThick});
-  // Top center piece
   walls.push({x1:cx-40, y1:tableTop, x2:cx+40, y2:tableTop, thick:wallThick});
-  // Upper side walls
   walls.push({x1:tableLeft, y1:tableTop+40, x2:tableLeft+wallThick, y2:tableTop+40, thick:wallThick});
   walls.push({x1:tableRight-wallThick, y1:tableTop+40, x2:tableRight, y2:tableTop+40, thick:wallThick});
 
-  // Bottom wall (with gap for drain)
   const drainW = 80;
   const drainStart = cx - drainW/2;
   walls.push({x1:tableLeft, y1:tableBottom, x2:drainStart, y2:tableBottom, thick:wallThick});
   walls.push({x1:drainStart+drainW, y1:tableBottom, x2:tableRight, y2:tableBottom, thick:wallThick});
 
-  // Side bumpers
   const bumperR = 22;
   bumpers = [];
-  bumpers.push({x:tableLeft+50, y:tableTop+140, r:bumperR, hp:1, color:'#D4A853', flash:0, score:100});
-  bumpers.push({x:tableRight-50, y:tableTop+140, r:bumperR, hp:1, color:'#00ff88', flash:0, score:100});
-  bumpers.push({x:cx, y:tableTop+100, r:bumperR, hp:1, color:'#D4A853', flash:0, score:100});
+  bumpers.push({x:tableLeft+50, y:tableTop+140, r:bumperR, hp:1, color:'#D4A853', flash:0, score:100, pulse:0});
+  bumpers.push({x:tableRight-50, y:tableTop+140, r:bumperR, hp:1, color:'#00ff88', flash:0, score:100, pulse:0});
+  bumpers.push({x:cx, y:tableTop+100, r:bumperR, hp:1, color:'#D4A853', flash:0, score:100, pulse:0});
 
-  bumpers.push({x:tableLeft+40, y:tableTop+240, r:bumperR, hp:1, color:'#00ff88', flash:0, score:150});
-  bumpers.push({x:tableRight-40, y:tableTop+240, r:bumperR, hp:1, color:'#00ff88', flash:0, score:150});
+  bumpers.push({x:tableLeft+40, y:tableTop+240, r:bumperR, hp:1, color:'#00ff88', flash:0, score:150, pulse:0});
+  bumpers.push({x:tableRight-40, y:tableTop+240, r:bumperR, hp:1, color:'#00ff88', flash:0, score:150, pulse:0});
 
-  // Mid bumpers
   const midBumpR = 18;
-  bumpers.push({x:cx-80, y:tableTop+180, r:midBumpR, hp:1, color:'#D4A853', flash:0, score:80});
-  bumpers.push({x:cx+80, y:tableTop+180, r:midBumpR, hp:1, color:'#00ff88', flash:0, score:80});
-  bumpers.push({x:cx, y:tableTop+260, r:midBumpR, hp:1, color:'#D4A853', flash:0, score:120});
+  bumpers.push({x:cx-80, y:tableTop+180, r:midBumpR, hp:1, color:'#D4A853', flash:0, score:80, pulse:0});
+  bumpers.push({x:cx+80, y:tableTop+180, r:midBumpR, hp:1, color:'#00ff88', flash:0, score:80, pulse:0});
+  bumpers.push({x:cx, y:tableTop+260, r:midBumpR, hp:1, color:'#D4A853', flash:0, score:120, pulse:0});
 
-  // Lower bumpers
-  bumpers.push({x:cx-60, y:tableTop+360, r:20, hp:1, color:'#00ff88', flash:0, score:100});
-  bumpers.push({x:cx+60, y:tableTop+360, r:20, hp:1, color:'#D4A853', flash:0, score:100});
+  bumpers.push({x:cx-60, y:tableTop+360, r:20, hp:1, color:'#00ff88', flash:0, score:100, pulse:0});
+  bumpers.push({x:cx+60, y:tableTop+360, r:20, hp:1, color:'#D4A853', flash:0, score:100, pulse:0});
 
-  // Flippers
   const flipY = tableBottom - 60;
   const flipLen = (tableW * 0.32);
   leftFlipper = {
@@ -229,14 +268,21 @@ function buildLevel(){
     side: 'right'
   };
 
-  // Gates (neon rings to hit through)
+  // Gates with slot letters
   gates = [];
   const gateR = 14;
-  gates.push({x:cx-30, y:tableTop+300, r:gateR, color:'#D4A853', flash:0, hit:false, score:50});
-  gates.push({x:cx+30, y:tableTop+300, r:gateR, color:'#00ff88', flash:0, hit:false, score:50});
-  gates.push({x:cx, y:tableTop+440, r:gateR, color:'#D4A853', flash:0, hit:false, score:200});
+  gates.push({x:cx-30, y:tableTop+300, r:gateR, color:'#D4A853', flash:0, hit:false, score:50, letter:'V'});
+  gates.push({x:cx+30, y:tableTop+300, r:gateR, color:'#00ff88', flash:0, hit:false, score:50, letter:'O'});
+  gates.push({x:cx, y:tableTop+440, r:gateR, color:'#D4A853', flash:0, hit:false, score:200, letter:'I'});
+  gates.push({x:cx-60, y:tableTop+380, r:gateR-2, color:'#00ff88', flash:0, hit:false, score:80, letter:'D'});
+  gates.push({x:cx+60, y:tableTop+380, r:gateR-2, color:'#D4A853', flash:0, hit:false, score:80, letter:'L'});
 
-  // Ball launch position
+  // Multiplier zones
+  multZones = [];
+  multZones.push({x:cx-120, y:tableTop+160, r:35, mult:2, flash:0, color:'#D4A853', label:'x2'});
+  multZones.push({x:cx+120, y:tableTop+160, r:35, mult:3, flash:0, color:'#00ff88', label:'x3'});
+  multZones.push({x:cx, y:tableTop+200, r:30, mult:2, flash:0, color:'#9966ff', label:'x2'});
+
   if(!balls[0]){
     balls[0] = makeBall(tableRight - 35, flipY - 20, 0, 0);
   }
@@ -254,14 +300,6 @@ function buildLevel(){
       balls[0].vy = 0;
       balls[0].trail = [];
     }
-  }
-}
-
-function launchBall(){
-  if(!launched && ballsLeft > 0){
-    launched = true;
-    ball.vx = -1 + Math.random() * 2;
-    ball.vy = ballLaunchVy;
   }
 }
 
@@ -287,13 +325,47 @@ function flashScreen(color){
   setTimeout(()=>{flash.style.opacity='0';},80);
 }
 
-// addScore moved inside updateBall
+function addScore(pts, x, y){
+  score += pts * activeMult;
+  scoreEl.textContent = score;
+  if(x !== undefined && y !== undefined){
+    spawnScorePopup(x, y, '+'+(pts*activeMult), '#D4A853');
+  }
+}
+
+function checkSlot(letter){
+  slotLetters.push(letter);
+  if(slotLetters.length > SLOT_SIZE) slotLetters.shift();
+  let word = slotLetters.join('');
+  slotValEl.textContent = word.padEnd(SLOT_SIZE, '-');
+  slotHudEl.style.opacity = '1';
+
+  for(let [key, val] of Object.entries(SLOT_WORDS)){
+    if(word === key){
+      addScore(val.bonus, W/2, H * 0.5);
+      spawnScorePopup(W/2, H * 0.45, val.text, val.color);
+      flashScreen(val.color);
+      // Gold particle burst
+      spawnParticles(W/2, H*0.5, val.color, 40, 10);
+      slotLetters = []; // reset on word hit
+      if(key === 'BALL' && ballsLeft < 5){
+        ballsLeft++;
+        ballsEl.textContent = ballsLeft;
+        spawnScorePopup(W/2, H*0.5+30, '+1 BALL', '#00ff88');
+      }
+      if(key === 'NEON'){
+        activeMult = Math.max(activeMult, 2);
+        multTimer = 5000;
+      }
+      break;
+    }
+  }
+}
 
 function updateBall(dt){
   if(!launched){
     autoLaunchTimer += dt;
     if(autoLaunchTimer > 2.5 && gameState === 'playing') launchBall();
-    // Update skill shot timer
     if(skillShotTimer > 0) skillShotTimer -= dt * 1000;
     return;
   }
@@ -321,32 +393,63 @@ function updateBall(dt){
     if(comboDisplay.timer <= 0) comboDisplay.count = 0;
   }
 
-  // Update each ball
+  // Update multiplier timer
+  if(multTimer > 0){
+    multTimer -= dt * 1000;
+    multValEl.textContent = 'x'+activeMult;
+    multHudEl.style.opacity = '1';
+    if(multTimer <= 0){
+      activeMult = 1;
+      multHudEl.style.opacity = '0';
+    }
+  }
+
+  // Update drain saver
+  if(drainSaverActive){
+    drainSaverTimer -= dt * 1000;
+    drainSaverEl.style.opacity = (Math.sin(Date.now()*0.01) > 0) ? '1' : '0.4';
+    if(drainSaverTimer <= 0){
+      drainSaverActive = false;
+      drainSaverEl.style.opacity = '0';
+    }
+  }
+
+  // Update charge decay (when flipper not moving up)
+  if(!mouseDown){
+    leftCharge = Math.max(0, leftCharge - CHARGE_DECAY * dt);
+    rightCharge = Math.max(0, rightCharge - CHARGE_DECAY * dt);
+  }
+
+  // Update bumper pulse animation
+  for(let b of bumpers){
+    b.pulse *= 0.95;
+  }
+
+  // Update mult zone flash
+  for(let z of multZones){
+    z.flash *= 0.9;
+  }
+
   for(let bi = balls.length - 1; bi >= 0; bi--){
     let ball = balls[bi];
 
     if(!launched && bi === 0) continue;
-    if(!launched) continue; // extra balls wait
+    if(!launched) continue;
 
-    // Gravity
     ball.vy += GRAVITY;
 
-    // Clamp velocity
     let speed = Math.sqrt(ball.vx*ball.vx+ball.vy*ball.vy);
     if(speed > MAX_VEL){
       ball.vx = (ball.vx/speed)*MAX_VEL;
       ball.vy = (ball.vy/speed)*MAX_VEL;
     }
 
-    // Move
     ball.x += ball.vx;
     ball.y += ball.vy;
 
-    // Trail
     ball.trail.unshift({x:ball.x,y:ball.y});
     if(ball.trail.length > 28) ball.trail.pop();
 
-    // Wall collisions
     for(let w of walls){
       resolveWall(ball, w);
     }
@@ -370,8 +473,15 @@ function updateBall(dt){
         ball.vx += nx * spd;
         ball.vy += ny * spd;
         b.flash = 1;
+        b.pulse = 1;
 
-        // Combo system
+        // Assign charge to the flipper on the side the ball is near
+        if(ball.x < W/2){
+          leftCharge = Math.min(MAX_CHARGE, leftCharge + CHARGE_GAIN);
+        } else {
+          rightCharge = Math.min(MAX_CHARGE, rightCharge + CHARGE_GAIN);
+        }
+
         comboCount++;
         comboTimer = COMBO_WINDOW;
         let comboMultiplier = Math.min(comboCount, 10);
@@ -387,7 +497,6 @@ function updateBall(dt){
           comboDisplay.timer = 1000;
         }
 
-        // Jackpot bumper spawns extra ball (only if primary ball is launched)
         if(isJackpot && launched){
           spawnExtraBall(b.x, b.y, (Math.random()-0.5)*10, -8);
           flashScreen('#D4A853');
@@ -396,7 +505,25 @@ function updateBall(dt){
         spawnParticles(b.x, b.y, isJackpot ? '#D4A853' : b.color, isJackpot ? 25 : 12, isJackpot ? 8 : 5);
         flashScreen(b.color);
       }
-      b.flash *= 0.88;
+    }
+
+    // Multiplier zone collisions
+    for(let z of multZones){
+      let dx = ball.x - z.x;
+      let dy = ball.y - z.y;
+      let dist = Math.sqrt(dx*dx+dy*dy);
+      if(dist < ball.r + z.r && !ball.extra){
+        z.flash = 1;
+        activeMult = Math.max(activeMult, z.mult);
+        multTimer = 4000;
+        spawnScorePopup(z.x, z.y - z.r - 10, 'x'+z.mult+' ZONE!', z.color);
+        spawnParticles(z.x, z.y, z.color, 15, 5);
+        flashScreen(z.color);
+        // Push ball away
+        let nx = dx/dist, ny = dy/dist;
+        ball.vx += nx * 4;
+        ball.vy += ny * 4;
+      }
     }
 
     // Gate collisions
@@ -411,10 +538,11 @@ function updateBall(dt){
         ball.vx += dx/dist * 3;
         ball.vy += dy/dist * 3;
 
-        // Track gates hit this life for extra ball
-        if(!ball.extra) gatesHitThisLife.add(gi);
+        if(!ball.extra){
+          gatesHitThisLife.add(gi);
+          checkSlot(g.letter);
+        }
 
-        // Extra ball: hit all 3 gates in one life
         if(gatesHitThisLife.size >= 3 && !extraBallAwarded && !ball.extra){
           extraBallAwarded = true;
           ballsLeft++;
@@ -439,6 +567,26 @@ function updateBall(dt){
         balls.splice(bi, 1);
         continue;
       } else {
+        // Drain saver check
+        if(drainSaverActive && ballsLeft > 1){
+          // Save the ball! Put it back
+          ballsLeft++;
+          ballsEl.textContent = ballsLeft;
+          balls[0].x = balls[0].startX;
+          balls[0].y = balls[0].startY;
+          balls[0].vx = 0;
+          balls[0].vy = 0;
+          balls[0].trail = [];
+          launched = false;
+          autoLaunchTimer = 0;
+          drainSaverActive = false;
+          drainSaverEl.style.opacity = '0';
+          spawnScorePopup(W/2, H/2, 'SAVED!', '#00ff88');
+          flashScreen('#00ff88');
+          triggerJackpot();
+          continue;
+        }
+
         ballsLeft--;
         let activeBalls = balls.length - 1;
         ballsEl.textContent = ballsLeft + (activeBalls > 0 ? '+' + activeBalls : '');
@@ -446,31 +594,29 @@ function updateBall(dt){
           gameState = 'gameover';
           showOverlay('GAME OVER', 'FINAL SCORE', score, 'PRESS SPACE TO PLAY AGAIN');
         } else {
-          // Reset for primary ball, but clear extra balls
           balls = [balls[0]];
           resetPrimaryBall();
-          // Reset gate tracking for new life
           gatesHitThisLife = new Set();
           extraBallAwarded = false;
-          // Trigger jackpot for new ball
+          // Trigger drain saver for next ball
+          drainSaverActive = true;
+          drainSaverTimer = DRAIN_SAVER_DURATION;
+          drainSaverEl.style.opacity = '1';
           triggerJackpot();
         }
       }
     }
 
-    // Ceiling
     if(ball.y < 0){
       ball.y = 0;
       ball.vy = Math.abs(ball.vy) * 0.5;
     }
-    // Side walls
     if(ball.x < 0){ ball.x = 0; ball.vx = Math.abs(ball.vx)*WALL_BOUNCE; }
     if(ball.x > W){ ball.x = W; ball.vx = -Math.abs(ball.vx)*WALL_BOUNCE; }
   }
 }
 
 function triggerJackpot(){
-  // Pick a random bumper as jackpot
   let idx = Math.floor(Math.random() * bumpers.length);
   jackpotBumper = bumpers[idx];
   jackpotActive = true;
@@ -478,20 +624,11 @@ function triggerJackpot(){
   spawnScorePopup(bumpers[idx].x, bumpers[idx].y - 30, 'JACKPOT!', '#D4A853');
 }
 
-function addScore(pts, x, y){
-  score += pts;
-  scoreEl.textContent = score;
-  if(x !== undefined && y !== undefined){
-    spawnScorePopup(x, y, '+'+pts, '#D4A853');
-  }
-}
-
 function resolveWall(b, w){
-  // Treat wall as line segment from (x1,y1) to (x2,y2)
   let wx = w.x2 - w.x1, wy = w.y2 - w.y1;
   let len = Math.sqrt(wx*wx+wy*wy);
   if(len === 0) return;
-  let nx = -wy/len, ny = wx/len; // normal
+  let nx = -wy/len, ny = wx/len;
   let t = Math.max(0, Math.min(1, ((b.x-w.x1)*wx + (b.y-w.y1)*wy)/(len*len)));
   let cx = w.x1 + t*wx, cy = w.y1 + t*wy;
   let dx = b.x-cx, dy = b.y-cy;
@@ -513,16 +650,9 @@ function resolveWall(b, w){
 function updateFlippers(dt){
   const inputForce = (mouseDown ? 1 : 0);
 
-  // Left flipper
-  if(leftFlipper.side === 'left'){
-    leftFlipper.targetAngle = inputForce ? leftFlipper.minAngle : 0.42;
-  }
-  // Right flipper
-  if(rightFlipper.side === 'right'){
-    rightFlipper.targetAngle = inputForce ? rightFlipper.maxAngle : Math.PI - 0.42;
-  }
+  leftFlipper.targetAngle = inputForce ? leftFlipper.minAngle : 0.42;
+  rightFlipper.targetAngle = inputForce ? rightFlipper.maxAngle : Math.PI - 0.42;
 
-  // Spring physics for flippers
   for(let f of [leftFlipper, rightFlipper]){
     let diff = f.targetAngle - f.angle;
     f.angularVel += diff * FLIPPER_ANGULAR_VEL * 3;
@@ -534,11 +664,9 @@ function updateFlippers(dt){
 function checkFlipperCollision(flipper){
   if(!balls[0]) return;
   let b = balls[0];
-  // Endpoint of flipper
   let ex = flipper.pivotX + Math.cos(flipper.angle) * flipper.len;
   let ey = flipper.pivotY + Math.sin(flipper.angle) * flipper.len;
 
-  // Check distance from ball to flipper line segment
   let wx = ex - flipper.pivotX, wy = ey - flipper.pivotY;
   let len = Math.sqrt(wx*wx+wy*wy);
   if(len === 0) return;
@@ -555,11 +683,28 @@ function checkFlipperCollision(flipper){
     let dot = b.vx*nx + b.vy*ny;
     if(dot < 0){
       let bounce = FLIPPER_BOUNCE;
-      // Add flipper angular velocity contribution
       let perpX = -ny, perpY = nx;
       let flipperTipSpeed = flipper.angularVel * flipper.len;
-      b.vx -= 2*dot*nx*bounce + perpX*flipperTipSpeed*0.8;
-      b.vy -= 2*dot*ny*bounce + perpY*flipperTipSpeed*0.8;
+
+      // Apply charge bonus
+      let chargeBonus = 0;
+      if(flipper.side === 'left' && leftCharge > 20){
+        chargeBonus = leftCharge * 0.08;
+        leftCharge = 0;
+        spawnScorePopup(b.x, b.y - 30, 'CHARGED!', '#9966ff');
+        spawnParticles(cx, cy, '#9966ff', 20, 6);
+        flashScreen('#9966ff');
+      }
+      if(flipper.side === 'right' && rightCharge > 20){
+        chargeBonus = rightCharge * 0.08;
+        rightCharge = 0;
+        spawnScorePopup(b.x, b.y - 30, 'CHARGED!', '#9966ff');
+        spawnParticles(cx, cy, '#9966ff', 20, 6);
+        flashScreen('#9966ff');
+      }
+
+      b.vx -= 2*dot*nx*bounce + perpX*flipperTipSpeed*0.8 + nx*chargeBonus;
+      b.vy -= 2*dot*ny*bounce + perpY*flipperTipSpeed*0.8 + ny*chargeBonus;
     }
     spawnParticles(cx, cy, '#D4A853', 4, 2);
   }
@@ -596,7 +741,6 @@ function draw(){
   // Glow pass for all balls
   for(let ba of balls){
     ctx.save();
-    ctx.shadowBlur = 0;
     ctx.globalAlpha = 0.3;
     for(let i=0;i<ba.trail.length;i++){
       let t = ba.trail[i];
@@ -609,7 +753,6 @@ function draw(){
     }
     ctx.restore();
 
-    // Ball trail
     ctx.lineCap = 'round';
     for(let i=1;i<ba.trail.length;i++){
       let t0 = ba.trail[i-1], t1 = ba.trail[i];
@@ -631,22 +774,48 @@ function draw(){
   }
   ctx.shadowBlur = 0;
 
+  // Multiplier zones
+  for(let z of multZones){
+    let glow = z.flash > 0.01;
+    ctx.shadowColor = z.color;
+    ctx.shadowBlur = glow ? 30 + z.flash*20 : 15;
+    ctx.strokeStyle = z.color;
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.3 + z.flash*0.4;
+    ctx.setLineDash([6,4]);
+    ctx.beginPath();
+    ctx.arc(z.x, z.y, z.r, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 0.15 + z.flash*0.3;
+    ctx.fillStyle = z.color;
+    ctx.beginPath();
+    ctx.arc(z.x, z.y, z.r, 0, Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = z.color;
+    ctx.font = '700 12px "Syncopate", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(z.label, z.x, z.y+4);
+    ctx.shadowBlur = 0;
+  }
+
   // Bumpers
   for(let b of bumpers){
     let glow = b.flash > 0.01;
     let isJackpot = jackpotActive && b === jackpotBumper;
     let jpGlow = isJackpot ? (0.5 + Math.sin(Date.now()*0.01)*0.5) : 0;
+    let pulseScale = 1 + b.pulse * 0.15;
     ctx.shadowColor = isJackpot ? '#D4A853' : b.color;
     ctx.shadowBlur = glow ? 30 + b.flash*20 : (isJackpot ? 35 + jpGlow*20 : 15);
     ctx.fillStyle = glow ? `rgba(${b.color==='#D4A853'?'212,168,83':'0,255,136'},${0.3+b.flash*0.7})` : (isJackpot ? `rgba(212,168,83,${0.5+jpGlow*0.5})` : `${b.color}33`);
     ctx.strokeStyle = isJackpot ? '#D4A853' : b.color;
     ctx.lineWidth = isJackpot ? 4 : 2;
     ctx.beginPath();
-    ctx.arc(b.x, b.y, b.r + (isJackpot ? 6 : 0), 0, Math.PI*2);
+    ctx.arc(b.x, b.y, (b.r + (isJackpot ? 6 : 0)) * pulseScale, 0, Math.PI*2);
     ctx.fill();
     ctx.stroke();
 
-    // Jackpot outer ring
     if(isJackpot){
       ctx.strokeStyle = '#D4A853';
       ctx.lineWidth = 2;
@@ -657,10 +826,9 @@ function draw(){
       ctx.globalAlpha = 1;
     }
 
-    // Inner glow dot
     ctx.fillStyle = b.color;
     ctx.beginPath();
-    ctx.arc(b.x, b.y, b.r * 0.4, 0, Math.PI*2);
+    ctx.arc(b.x, b.y, b.r * 0.4 * pulseScale, 0, Math.PI*2);
     ctx.fill();
   }
   ctx.shadowBlur = 0;
@@ -691,7 +859,7 @@ function draw(){
     ctx.shadowBlur = 0;
   }
 
-  // Gates
+  // Gates with letters
   for(let g of gates){
     let alpha = g.hit ? 0.3 : (0.5 + Math.sin(Date.now()*0.005)*0.2);
     ctx.strokeStyle = g.color;
@@ -703,18 +871,27 @@ function draw(){
     ctx.arc(g.x, g.y, g.r, 0, Math.PI*2);
     ctx.stroke();
     ctx.globalAlpha = 1;
+    // Letter inside gate
+    ctx.fillStyle = g.color;
+    ctx.font = '700 11px "Syncopate", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.shadowBlur = 8;
+    ctx.fillText(g.letter, g.x, g.y+4);
     ctx.shadowBlur = 0;
   }
 
-  // Flippers
+  // Flippers with charge indicator
   for(let f of [leftFlipper, rightFlipper]){
     let ex = f.pivotX + Math.cos(f.angle) * f.len;
     let ey = f.pivotY + Math.sin(f.angle) * f.len;
     let moving = Math.abs(f.angularVel) > 0.02;
-    ctx.strokeStyle = moving ? '#00ff88' : '#D4A853';
+    let charge = f.side === 'left' ? leftCharge : rightCharge;
+    let charged = charge > 20;
+    let flipColor = charged ? '#9966ff' : (moving ? '#00ff88' : '#D4A853');
+    ctx.strokeStyle = flipColor;
     ctx.lineWidth = 14;
     ctx.lineCap = 'round';
-    ctx.shadowColor = moving ? '#00ff88' : '#D4A853';
+    ctx.shadowColor = flipColor;
     ctx.shadowBlur = moving ? 20 : 12;
     ctx.beginPath(); ctx.moveTo(f.pivotX, f.pivotY); ctx.lineTo(ex, ey); ctx.stroke();
     // Pivot
@@ -722,6 +899,10 @@ function draw(){
     ctx.beginPath(); ctx.arc(f.pivotX, f.pivotY, 9, 0, Math.PI*2); ctx.fill();
     ctx.shadowBlur = 0;
   }
+
+  // Update charge bar UI
+  lchargeEl.style.width = leftCharge + '%';
+  rchargeEl.style.width = rightCharge + '%';
 
   // Draw all balls
   for(let bi = 0; bi < balls.length; bi++){
@@ -739,7 +920,6 @@ function draw(){
     ctx.fill();
     ctx.shadowBlur = 0;
 
-    // Ball count badge for extra balls
     if(ba.extra){
       ctx.fillStyle = '#0a0a0a';
       ctx.font = '700 10px "Syncopate", sans-serif';
@@ -790,9 +970,16 @@ function showOverlay(title, sub, value, action){
     <h1>${title}</h1>
     <p>${sub}</p>
     <div class="big">${value}</div>
+    <p class="slot-display" id="slot-display"></p>
+    <p class="slot-bonus" id="slot-bonus"></p>
     <p class="sub">${action}</p>
   `;
   overlay.classList.remove('hidden');
+  // Show slot instructions
+  const slotDisp = document.getElementById('slot-display');
+  const slotBonus = document.getElementById('slot-bonus');
+  if(slotDisp) slotDisp.textContent = 'SLOT WORDS: VOID · BALL · NEON · GOLD';
+  if(slotBonus) slotBonus.textContent = 'HIT GATES V-O-I-D-L FOR BONUSES';
 }
 
 function hideOverlay(){
@@ -808,11 +995,9 @@ function startGame(){
   ballsEl.textContent = '3';
   gameState = 'playing';
   launched = false;
-  // Initialize balls array
   balls = [];
   balls[0] = makeBall(0, 0, 0, 0);
   balls[0].extra = false;
-  // Reset all systems
   comboCount = 0;
   comboTimer = 0;
   comboDisplay.count = 0;
@@ -821,7 +1006,17 @@ function startGame(){
   jackpotBumper = null;
   gatesHitThisLife = new Set();
   extraBallAwarded = false;
-  // Skill shot: random gate lit on launch
+  leftCharge = 0;
+  rightCharge = 0;
+  drainSaverActive = false;
+  drainSaverTimer = 0;
+  drainSaverEl.style.opacity = '0';
+  activeMult = 1;
+  multTimer = 0;
+  multHudEl.style.opacity = '0';
+  slotLetters = [];
+  slotValEl.textContent = '----';
+  slotHudEl.style.opacity = '0';
   skillShotTarget = Math.floor(Math.random() * gates.length);
   skillShotTimer = 3000;
   buildLevel();
@@ -840,7 +1035,6 @@ function loop(ts){
     updateBall(dt);
     updateParticles();
 
-    // Wave progression
     if(score > wave * 2000){
       wave++;
       waveEl.textContent = wave;
@@ -853,7 +1047,6 @@ function loop(ts){
   requestAnimationFrame(loop);
 }
 
-// Input
 window.addEventListener('keydown', e=>{
   keys[e.code] = true;
   if(e.code === 'Space'){
@@ -872,6 +1065,10 @@ window.addEventListener('keydown', e=>{
       resetPrimaryBall();
       gatesHitThisLife = new Set();
       extraBallAwarded = false;
+      leftCharge = 0;
+      rightCharge = 0;
+      drainSaverActive = false;
+      drainSaverEl.style.opacity = '0';
       triggerJackpot();
     }
   }
@@ -896,7 +1093,6 @@ window.addEventListener('touchmove', e=>{ mouseX = e.touches[0].clientX; mouseY 
 
 window.addEventListener('resize', resize);
 
-// Init
 resize();
 showOverlay('VOID BALL', 'NEON PINBALL', '', 'CLICK OR PRESS SPACE TO START');
 requestAnimationFrame(loop);
